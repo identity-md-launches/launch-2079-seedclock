@@ -174,6 +174,22 @@ contract SeedClockTest is SeedClockFixture {
         assertEq(distributor.totalShares(), 56);
     }
 
+    function test_transfersToDistributorOrCollectionRejectedSoNoShareIsStranded() public {
+        mintAs(alice, 2);
+        address[2] memory sinks = [address(distributor), address(clock)];
+        for (uint256 i; i < 2; ++i) {
+            vm.startPrank(alice);
+            vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, sinks[i]));
+            clock.transferFrom(alice, sinks[i], 56);
+            vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, sinks[i]));
+            clock.safeTransferFrom(alice, sinks[i], 57);
+            vm.stopPrank();
+            assertEq(distributor.shares(sinks[i]), 0);
+        }
+        assertEq(clock.ownerOf(56), alice);
+        assertEq(distributor.shares(alice), 2);
+    }
+
     function test_unapprovedTransfersRejectedEvenWithValidatorPermission() public {
         mintAs(alice, 1);
         validator.authorize(address(clock), operator, 56, true);

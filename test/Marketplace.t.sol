@@ -66,7 +66,8 @@ contract MarketplaceTest is SeedClockFixture {
         uint256 perToken = fee / 57;
         assertEq(distributor.claimable(bob), perToken);
         assertEq(distributor.claimable(alice), perToken);
-        assertEq(distributor.claimable(treasury), perToken * 55 + fee % 57);
+        assertEq(distributor.claimable(treasury), perToken * 55);
+        assertEq(distributor.undistributed(address(0)), fee % 57); // Carried into the next receipt.
         distributor.claimFor(address(0), bob);
         assertEq(bob.balance, perToken);
 
@@ -93,7 +94,8 @@ contract MarketplaceTest is SeedClockFixture {
         distributor.claimFor(address(paymentToken), bob);
         distributor.claimFor(address(paymentToken), treasury);
         assertEq(paymentToken.balanceOf(bob), royalty / 56);
-        assertEq(paymentToken.balanceOf(address(distributor)), 0);
+        assertEq(paymentToken.balanceOf(address(distributor)), royalty % 56); // Carried forward.
+        assertEq(distributor.undistributed(address(paymentToken)), royalty % 56);
     }
 
     /// @dev Keep authorization, execution and clearing in ONE transaction, like Seaport. Forge 1.8

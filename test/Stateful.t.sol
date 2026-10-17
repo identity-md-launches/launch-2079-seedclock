@@ -13,6 +13,8 @@ contract RoyaltyHandler is Test {
     address[4] public actors;
     mapping(address => uint256) public nativeCredit;
     mapping(address => uint256) public tokenCredit;
+    uint256 public nativeCarry;
+    uint256 public tokenCarry;
     uint256 public receivedNative;
     uint256 public claimedNative;
     uint256 public receivedToken;
@@ -64,7 +66,7 @@ contract RoyaltyHandler is Test {
     function claimNative(uint8 who) external {
         address actor = actors[who % 4];
         // Claims with no pending receipt can revert NothingToClaim. All successful transfers must
-        // match the independent receipt-time model (at most 64 receipts in a depth-64 sequence).
+        // match the independent receipt-time model (at most 64 balance segments in a depth-64 run).
         try distributor.claimFor(address(0), actor) returns (uint256 amount) {
             assertEq(amount, nativeCredit[actor]);
             nativeCredit[actor] -= amount;
@@ -86,13 +88,15 @@ contract RoyaltyHandler is Test {
     }
 
     function _credit(uint256 amount, bool nativeAsset) private {
-        uint256 perToken = amount / clock.totalSupply();
-        uint256 dust = amount % clock.totalSupply();
-        address firstOwner = clock.ownerOf(1);
+        if (amount == 0) return;
+        // Remainders carry into the next receipt of the same asset.
+        uint256 pool = amount + (nativeAsset ? nativeCarry : tokenCarry);
+        uint256 perToken = pool / clock.totalSupply();
+        if (nativeAsset) nativeCarry = pool % clock.totalSupply();
+        else tokenCarry = pool % clock.totalSupply();
         for (uint256 i; i < 4; ++i) {
             address actor = actors[i];
             uint256 earned = clock.balanceOf(actor) * perToken;
-            if (actor == firstOwner) earned += dust;
             if (nativeAsset) nativeCredit[actor] += earned;
             else tokenCredit[actor] += earned;
         }
@@ -129,7 +133,6 @@ contract StatefulTest is SeedClockFixture {
         assertEq(sum, clock.totalSupply());
         assertEq(sum, distributor.totalShares());
         assertLe(sum, 5555);
-        assertEq(distributor.firstTokenOwner(), clock.ownerOf(1));
     }
 
     function invariant_nativeAssetsConservedAndAllFundsClaimable() public view {
@@ -138,6 +141,8 @@ contract StatefulTest is SeedClockFixture {
             assertEq(distributor.claimable(actors[i]), handler.nativeCredit(actors[i]));
             liabilities += handler.nativeCredit(actors[i]);
         }
+        assertEq(distributor.undistributed(address(0)), handler.nativeCarry());
+        liabilities += handler.nativeCarry();
         assertEq(address(distributor).balance, liabilities);
         assertEq(distributor.accountedBalance(address(0)), liabilities);
         assertEq(handler.receivedNative(), handler.claimedNative() + liabilities);
@@ -153,6 +158,8 @@ contract StatefulTest is SeedClockFixture {
             assertEq(amount, handler.tokenCredit(actors[i]));
             liabilities += amount;
         }
+        assertEq(distributor.undistributed(currency), handler.tokenCarry());
+        liabilities += handler.tokenCarry();
         assertEq(MockIMD(currency).balanceOf(address(distributor)), liabilities);
         assertEq(distributor.accountedBalance(currency), liabilities);
         assertEq(handler.receivedToken(), handler.claimedToken() + liabilities);

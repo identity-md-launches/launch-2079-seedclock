@@ -90,54 +90,140 @@ contract RoyaltyDistributorTest is SeedClockFixture {
         assertEq(distributor.totalClaimed(address(0)), 1 ether);
     }
 
-    function test_allRoundingDustClaimableByTokenOneHolderAtReceipt() public {
+    function test_remainderCarriesIntoNextReceiptInsteadOfOneHolder() public {
         pay(1);
-        move(treasury, alice, 1);
-        pay(56); // 55 indivisible shares, one wei remainder belongs to Alice.
-        assertEq(distributor.claimable(treasury), 55);
-        assertEq(distributor.claimable(alice), 2);
+        move(treasury, alice, 1); // Holding token 1 earns no remainder.
+        pay(56); // Pool 57 over 55 shares: one per share, two carried.
+        assertEq(distributor.claimable(treasury), 54);
+        assertEq(distributor.claimable(alice), 1);
+        assertEq(distributor.undistributed(address(0)), 2);
+        pay(53); // Pool 55: one per share, nothing carried.
+        assertEq(distributor.undistributed(address(0)), 0);
         distributor.claimFor(address(0), treasury);
         distributor.claimFor(address(0), alice);
+        assertEq(treasury.balance, 108);
+        assertEq(alice.balance, 2);
         assertEq(address(distributor).balance, 0);
-        assertEq(distributor.totalClaimed(address(0)), 57);
+        assertEq(distributor.totalClaimed(address(0)), 110);
+    }
+
+    function test_lowDecimalRemainderIsNotRedirectedToTokenOneHolder() public {
+        MockIMD currency = new MockIMD();
+        mintAs(alice, 5); // 60 shares; the treasury holds token 1.
+        currency.mint(address(distributor), 10_000);
+        distributor.syncToken(address(currency));
+        (uint256 treasuryAmount,) = distributor.claimable(address(currency), treasury);
+        (uint256 aliceAmount,) = distributor.claimable(address(currency), alice);
+        assertEq(treasuryAmount, 166 * 55);
+        assertEq(aliceAmount, 166 * 5);
+        assertEq(distributor.undistributed(address(currency)), 40);
     }
 
     function test_tinyAndZeroReceiptsDoNotGrowQueue() public {
         pay(0);
-        for (uint256 i; i < 100; ++i) {
+        for (uint256 i; i < 54; ++i) {
             pay(1);
         }
         assertEq(distributor.receiptCount(address(0)), 0);
-        assertEq(distributor.claimable(treasury), 100);
+        assertEq(distributor.undistributed(address(0)), 54);
+        assertEq(distributor.claimable(treasury), 0);
+        pay(1); // The carry reaches one wei per share and becomes a receipt.
+        assertEq(distributor.receiptCount(address(0)), 1);
+        assertEq(distributor.claimable(treasury), 55);
         distributor.claimFor(address(0), treasury);
         assertEq(address(distributor).balance, 0);
     }
 
-    function test_claimPaginationProgressesWithoutUnboundedLoops() public {
-        for (uint256 i; i < 130; ++i) {
-            pay(55);
-        }
-        assertEq(distributor.receiptCount(address(0)), 130);
-        assertEq(distributor.claimable(treasury), 64 * 55);
-        distributor.claimFor(address(0), treasury);
-        assertEq(distributor.nextReceipt(address(0), treasury), 64);
-        distributor.claimFor(address(0), treasury);
-        assertEq(distributor.nextReceipt(address(0), treasury), 128);
-        distributor.claimFor(address(0), treasury);
-        assertEq(distributor.nextReceipt(address(0), treasury), 130);
-        assertEq(treasury.balance, 130 * 55);
-        assertEq(address(distributor).balance, 0);
+    function test_subShareAmountEmitsNoReceiptIndex() public {
+        vm.expectEmit(address(distributor));
+        emit RoyaltyDistributor.RoyaltyReceived(address(0), 1, distributor.NO_RECEIPT(), 1);
+        pay(1);
+        vm.expectEmit(address(distributor));
+        emit RoyaltyDistributor.RoyaltyReceived(address(0), 55, 0, 1);
+        pay(55);
+        vm.expectEmit(address(distributor));
+        emit RoyaltyDistributor.RoyaltyReceived(address(0), 110, 1, 1);
+        pay(110);
+        (uint64 atRevision, uint256 perToken, uint256 cumulative) = distributor.receipt(address(0), 1);
+        assertEq(atRevision, 1);
+        assertEq(perToken, 2);
+        assertEq(cumulative, 3);
     }
 
-    function test_zeroEntitlementBatchCanAdvanceToLaterEarnedReceipts() public {
-        for (uint256 i; i < 65; ++i) {
-            pay(55);
+    function test_claimPaginatesOverBalanceSegments() public {
+        mintAs(alice, 1);
+        for (uint256 i; i < 70; ++i) {
+            pay(56); // Alice holds token 56.
+            move(alice, bob, 56);
+            pay(56); // Bob holds token 56.
+            move(bob, alice, 56);
         }
+        assertEq(distributor.receiptCount(address(0)), 140);
+        (uint256 first, uint256 end) = distributor.claimable(address(0), alice);
+        assertEq(first, 32);
+        assertEq(end, 64);
+        assertEq(distributor.claimFor(address(0), alice), 32);
+        assertEq(distributor.nextReceipt(address(0), alice), 64);
+        assertEq(distributor.claimFor(address(0), alice), 32);
+        assertEq(distributor.nextReceipt(address(0), alice), 128);
+        assertEq(distributor.claimFor(address(0), alice), 6);
+        assertEq(distributor.nextReceipt(address(0), alice), 140);
+        vm.expectRevert(RoyaltyDistributor.NothingToClaim.selector);
+        distributor.claimFor(address(0), alice);
+        // The treasury's balance never changed: one segment, one claim.
+        assertEq(distributor.claimFor(address(0), treasury), 140 * 55);
+        assertEq(distributor.nextReceipt(address(0), treasury), 140);
+    }
+
+    function test_lateHolderSkipsEarlierReceiptsInOneCheapClaim() public {
+        for (uint256 i; i < 1000; ++i) {
+            pay(55); // Includes the spam pattern: the smallest amount that creates a receipt.
+        }
+        mintAs(alice, 5);
+        pay(60 ether);
+        uint256 gasBefore = gasleft();
+        assertEq(distributor.claimFor(address(0), alice), 5 ether);
+        assertLt(gasBefore - gasleft(), 200_000); // Was about 7k gas per receipt before.
+        assertEq(distributor.nextReceipt(address(0), alice), 1001);
+        // A long-standing holder settles all 1001 receipts in one claim too.
+        gasBefore = gasleft();
+        assertEq(distributor.claimFor(address(0), treasury), 1000 * 55 + 55 ether);
+        assertLt(gasBefore - gasleft(), 200_000);
+    }
+
+    function test_holderReturningAfterSellingSkipsGapInOneClaim() public {
         mintAs(alice, 1);
         pay(56);
-        assertEq(distributor.claimFor(address(0), alice), 0);
-        assertEq(distributor.nextReceipt(address(0), alice), 64);
-        assertEq(distributor.claimFor(address(0), alice), 1);
+        move(alice, bob, 56);
+        for (uint256 i; i < 500; ++i) {
+            pay(56);
+        }
+        move(bob, alice, 56);
+        pay(56);
+        assertEq(distributor.claimFor(address(0), alice), 2);
+        assertEq(distributor.nextReceipt(address(0), alice), 502);
+        assertEq(distributor.claimFor(address(0), bob), 500);
+    }
+
+    function test_wethReceivedBeforeShareChangeBelongsToHoldersOfRecord() public {
+        vm.etch(distributor.WETH(), address(new MockIMD()).code);
+        MockIMD weth = MockIMD(distributor.WETH());
+        weth.mint(address(distributor), 55 ether);
+        mintAs(alice, 5); // The first share change records the earlier WETH first.
+        assertEq(distributor.receiptCount(address(weth)), 1);
+        distributor.syncToken(address(weth)); // Idempotent.
+        assertEq(distributor.receiptCount(address(weth)), 1);
+        (uint256 aliceAmount,) = distributor.claimable(address(weth), alice);
+        (uint256 treasuryAmount,) = distributor.claimable(address(weth), treasury);
+        assertEq(aliceAmount, 0);
+        assertEq(treasuryAmount, 55 ether);
+        weth.mint(address(distributor), 60 ether);
+        move(treasury, bob, 1);
+        (aliceAmount,) = distributor.claimable(address(weth), alice);
+        assertEq(aliceAmount, 5 ether);
+        assertEq(distributor.claimFor(address(weth), treasury), 110 ether);
+        assertEq(distributor.claimFor(address(weth), alice), 5 ether);
+        assertEq(weth.balanceOf(address(distributor)), 0);
     }
 
     function test_anyCallerCanAssistButCannotRedirectAnotherHoldersClaim() public {
@@ -300,13 +386,16 @@ contract RoyaltyDistributorTest is SeedClockFixture {
         move(alice, bob, 56);
         move(treasury, bob, 1);
         pay(two);
+        uint256 carry = distributor.undistributed(address(0));
+        assertLt(carry, 55 + n);
         uint256 total =
             distributor.claimable(treasury) + distributor.claimable(alice) + distributor.claimable(bob);
-        assertEq(total, one + two);
+        assertEq(total + carry, one + two);
         if (distributor.claimable(treasury) != 0) distributor.claimFor(address(0), treasury);
         if (distributor.claimable(alice) != 0) distributor.claimFor(address(0), alice);
         if (distributor.claimable(bob) != 0) distributor.claimFor(address(0), bob);
-        assertEq(address(distributor).balance, 0);
-        assertEq(distributor.totalClaimed(address(0)), one + two);
+        assertEq(address(distributor).balance, carry);
+        assertEq(distributor.accountedBalance(address(0)), carry);
+        assertEq(distributor.totalClaimed(address(0)), one + two - carry);
     }
 }

@@ -152,6 +152,8 @@ contract SeedClock is ERC721, IERC2981, ICreatorToken, ReentrancyGuard {
         from = _ownerOf(tokenId);
         // Check authorization before the external validator. The base checks again when it updates.
         if (auth != address(0)) _checkAuthorized(from, auth, tokenId);
+        // Neither contract can claim or move a token: its royalty share would be stranded forever.
+        if (to == distributor || to == address(this)) revert ERC721InvalidReceiver(to);
         if (from != address(0)) {
             if (TRANSFER_VALIDATOR.code.length == 0) revert ValidatorUnavailable();
             ITransferValidator(TRANSFER_VALIDATOR).validateTransfer(msg.sender, from, to, tokenId);
