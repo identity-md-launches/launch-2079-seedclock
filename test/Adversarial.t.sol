@@ -278,18 +278,69 @@ contract AdversarialTest is SeedClockFixture {
         assertEq(address(distributor).balance, 0);
     }
 
-    function test_dustBelowTotalSharesGoesEntirelyToTokenOneHolder() public {
+    function test_dustBelowTotalSharesIsCarriedNotGivenToTokenOneHolder() public {
         mintAs(alice, 5);
         move(treasury, bob, 1);
-        pay(59); // 60 shares, 59 wei: no receipt, all dust to the current holder of token 1.
+        pay(59); // 60 shares, 59 wei: no receipt, and the holder of token 1 gets no remainder.
         assertEq(distributor.receiptCount(address(0)), 0);
-        assertEq(distributor.claimable(bob), 59);
+        assertEq(distributor.undistributed(address(0)), 59);
+        assertEq(distributor.claimable(bob), 0);
         assertEq(distributor.claimable(alice), 0);
         assertEq(distributor.claimable(treasury), 0);
-        pay(60);
+        vm.expectRevert(RoyaltyDistributor.NothingToClaim.selector);
+        distributor.claimFor(address(0), bob);
+        pay(60); // pool 119: one wei per share, 59 carried again.
+        assertEq(distributor.receiptCount(address(0)), 1);
+        assertEq(distributor.undistributed(address(0)), 59);
         assertEq(distributor.claimable(alice), 5);
-        assertEq(distributor.claimable(bob), 60);
+        assertEq(distributor.claimable(bob), 1);
         assertEq(distributor.claimable(treasury), 54);
+        assertEq(distributor.accountedBalance(address(0)), 60 + 59);
+    }
+
+    function test_claimSettlesAtMost64SegmentsAndResumes() public {
+        // Alice's balance alternates 1 -> 0 -> 1 ... with a receipt in each stretch: 80 segments.
+        mintAs(alice, 1);
+        uint256 expected;
+        for (uint256 i; i < 80; ++i) {
+            pay(56 ether);
+            if (clock.ownerOf(56) == alice) {
+                expected += 1 ether;
+                move(alice, bob, 56);
+            } else {
+                move(bob, alice, 56);
+            }
+        }
+        uint256 first = distributor.claimFor(address(0), alice);
+        uint256 cursor = distributor.nextReceipt(address(0), alice);
+        assertLt(cursor, distributor.receiptCount(address(0)), "one call settled more than 64 segments");
+        assertEq(cursor, 64);
+        uint256 second = distributor.claimFor(address(0), alice);
+        assertEq(first + second, expected);
+        assertEq(alice.balance, expected);
+        vm.expectRevert(RoyaltyDistributor.NothingToClaim.selector);
+        distributor.claimFor(address(0), alice);
+    }
+
+    function test_lateJoinerSkipsAnyNumberOfEarlierReceiptsInOneCall() public {
+        for (uint256 i; i < 300; ++i) {
+            pay(55);
+        }
+        mintAs(alice, 1);
+        pay(56 ether);
+        // 301 receipts, but only two constant-balance segments for alice: one call settles them all.
+        assertEq(distributor.claimFor(address(0), alice), 1 ether);
+        assertEq(distributor.nextReceipt(address(0), alice), 301);
+        assertEq(distributor.claimFor(address(0), treasury), 300 * 55 + 55 ether);
+    }
+
+    function test_receiptBeyondUint192PerShareRevertsWithoutAccounting() public {
+        MockIMD currency = new MockIMD();
+        currency.mint(address(distributor), uint256(type(uint192).max) * 56);
+        vm.expectRevert(RoyaltyDistributor.ReceiptTooLarge.selector);
+        distributor.syncToken(address(currency));
+        assertEq(distributor.accountedBalance(address(currency)), 0);
+        assertEq(distributor.receiptCount(address(currency)), 0);
     }
 
     function test_operatorTransferMovesFutureRoyaltiesOnly() public {
@@ -351,9 +402,11 @@ contract AdversarialTest is SeedClockFixture {
         uint256 supply = 55 + a + b;
         assertEq(distributor.claimable(alice), amount / supply * a);
         assertEq(distributor.claimable(bob), amount / supply * b);
-        assertEq(distributor.claimable(treasury), amount / supply * 55 + amount % supply);
+        assertEq(distributor.claimable(treasury), amount / supply * 55);
+        assertEq(distributor.undistributed(address(0)), amount % supply);
         assertEq(
-            distributor.claimable(alice) + distributor.claimable(bob) + distributor.claimable(treasury),
+            distributor.claimable(alice) + distributor.claimable(bob) + distributor.claimable(treasury)
+                + distributor.undistributed(address(0)),
             amount
         );
     }

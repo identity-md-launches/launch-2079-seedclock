@@ -22,6 +22,9 @@ contract DeepHandler is Test {
     mapping(address => uint256) public nativeEarnedTotal;
     mapping(address => uint256) public nativeClaimedBy;
     uint256 public forcedUnsynced;
+    // Remainder below one unit per share, carried into the asset's next receipt.
+    uint256 public nativeCarry;
+    uint256 public tokenCarry;
     uint256 public nativeIn;
     uint256 public nativeOut;
     uint256 public tokenIn;
@@ -184,12 +187,13 @@ contract DeepHandler is Test {
     function _credit(uint256 amount, bool nativeAsset) private {
         if (amount == 0) return;
         uint256 supply = clock.totalSupply();
-        uint256 perToken = amount / supply;
-        address firstOwner = clock.ownerOf(1);
+        uint256 pool = amount + (nativeAsset ? nativeCarry : tokenCarry);
+        uint256 perToken = pool / supply;
+        if (nativeAsset) nativeCarry = pool % supply;
+        else tokenCarry = pool % supply;
         for (uint256 i; i < 5; ++i) {
             address actor = actors[i];
             uint256 earned = clock.balanceOf(actor) * perToken;
-            if (actor == firstOwner) earned += amount % supply;
             if (nativeAsset) {
                 nativeOwed[actor] += earned;
                 nativeEarnedTotal[actor] += earned;
@@ -239,8 +243,15 @@ contract DeepInvariantTest is SeedClockFixture {
             owed += handler.nativeOwed(actors[i]);
             assertLe(handler.nativeClaimedBy(actors[i]), handler.nativeEarnedTotal(actors[i]));
         }
-        assertEq(distributor.accountedBalance(address(0)), owed, "accounted != owed");
-        assertEq(address(distributor).balance, owed + handler.forcedUnsynced(), "balance != owed + unsynced");
+        uint256 carry = handler.nativeCarry();
+        assertEq(distributor.undistributed(address(0)), carry, "carry drift");
+        assertLt(carry, clock.totalSupply(), "carry reached one unit per share");
+        assertEq(distributor.accountedBalance(address(0)), owed + carry, "accounted != owed + carry");
+        assertEq(
+            address(distributor).balance,
+            owed + carry + handler.forcedUnsynced(),
+            "balance != owed + carry + unsynced"
+        );
         assertEq(distributor.totalReceived(address(0)), handler.nativeIn());
         assertEq(distributor.totalClaimed(address(0)), handler.nativeOut());
         assertEq(
@@ -257,8 +268,11 @@ contract DeepInvariantTest is SeedClockFixture {
         for (uint256 i; i < 5; ++i) {
             owed += handler.tokenOwed(actors[i]);
         }
-        assertEq(MockIMD(currency).balanceOf(address(distributor)), owed);
-        assertEq(distributor.accountedBalance(currency), owed);
+        uint256 carry = handler.tokenCarry();
+        assertEq(distributor.undistributed(currency), carry);
+        assertLt(carry, clock.totalSupply());
+        assertEq(MockIMD(currency).balanceOf(address(distributor)), owed + carry);
+        assertEq(distributor.accountedBalance(currency), owed + carry);
         assertEq(distributor.totalReceived(currency), handler.tokenIn());
         assertEq(distributor.totalClaimed(currency), handler.tokenOut());
     }
@@ -280,7 +294,6 @@ contract DeepInvariantTest is SeedClockFixture {
         assertGe(supply, 55);
         assertLe(supply, 5555);
         assertFalse(handler.supplyDecreased());
-        assertEq(distributor.firstTokenOwner(), clock.ownerOf(1));
         assertEq(distributor.collection(), address(clock));
         assertEq(clock.treasury(), treasury);
         assertEq(clock.distributor(), address(distributor));
