@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>SeedClock — on-chain art preview</title>
+<style>
+  :root{font-family:ui-sans-serif,system-ui,sans-serif;background:#131b21;color:#edf2ed;color-scheme:dark}
+  body{max-width:1200px;margin:auto;padding:clamp(24px,5vw,64px)}
+  .eyebrow{font:12px monospace;letter-spacing:.2em;color:#a9ed9e}
+  h1{font-size:clamp(40px,7vw,80px);letter-spacing:-.06em;margin:.25em 0}
+  header p{max-width:620px;color:#b7c6c6;line-height:1.6}
+  main{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;margin:44px 0}
+  figure{margin:0;background:#202b32;padding:10px;border:1px solid #33414a;border-radius:12px}
+  img{display:block;width:100%;aspect-ratio:1;border-radius:5px}
+  figcaption{padding:16px 6px 8px;font:13px monospace;display:flex;justify-content:space-between}
+  figcaption span{color:#a4b7bd}
+  a{color:inherit;text-underline-offset:4px}
+  footer{font-size:13px;line-height:1.7;color:#a4b7bd;border-top:1px solid #33414a;padding-top:20px}
+  @media(prefers-color-scheme:light){:root{background:#f0f0e9;color:#172328;color-scheme:light}figure{background:#fafbf5;border-color:#cbd4cf}.eyebrow{color:#356348}header p,figcaption span,footer{color:#4c625c}}
+</style>
+<header>
+  <p class="eyebrow">SCLOCK / GENERATIVE ARCHIVE</p>
+  <h1>A moment, still alive.</h1>
+  <p>Six clocks from the fully on-chain SeedClock renderer. Every shape, color and movement comes from a recovered Unix timestamp and a deterministic candidate seed.</p>
+</header>
+<main>
+  <figure><a href="previews/seedclock-1.svg"><img src="previews/seedclock-1.svg" alt="SeedClock 1, warm oxide palette"></a><figcaption>#0001 <span>Oxide</span></figcaption></figure>
+  <figure><a href="previews/seedclock-3.svg"><img src="previews/seedclock-3.svg" alt="SeedClock 3, midnight palette"></a><figcaption>#0003 <span>Midnight</span></figcaption></figure>
+  <figure><a href="previews/seedclock-4.svg"><img src="previews/seedclock-4.svg" alt="SeedClock 4, cobalt palette"></a><figcaption>#0004 <span>Cobalt</span></figcaption></figure>
+  <figure><a href="previews/seedclock-6.svg"><img src="previews/seedclock-6.svg" alt="SeedClock 6, pale green CRT mint palette"></a><figcaption>#0006 <span>CRT Mint</span></figcaption></figure>
+  <figure><a href="previews/seedclock-13.svg"><img src="previews/seedclock-13.svg" alt="SeedClock 13, violet terminal palette"></a><figcaption>#0013 <span>Violet Terminal</span></figcaption></figure>
+  <figure><a href="previews/seedclock-25.svg"><img src="previews/seedclock-25.svg" alt="SeedClock 25, parchment palette"></a><figcaption>#0025 <span>Parchment</span></figcaption></figure>
+</main>
+<footer>
+  These SVGs were decoded directly from the Solidity renderer's tokenURI output. Open an image to view its standalone SVG animation. This is an art preview, not a mint website or a claim that the collection is deployed.<br>
+  <a href="../README.md">Derivation and contracts</a> · <a href="https://www.anthropic.com/research/ecdsa-curve-origins">The timestamp discovery</a>
+</footer>
+</html>
